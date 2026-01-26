@@ -1,3 +1,4 @@
+import "server-only";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import type { CookieOptions } from "@supabase/ssr";
@@ -21,7 +22,7 @@ export async function createSupabaseServer() {
             cookieStore.set(name, value, options);
           });
         } catch {
-          // Server Components may throw if setting cookies after headers are sent.
+          // Can throw in Server Components if headers already sent
         }
       },
     },

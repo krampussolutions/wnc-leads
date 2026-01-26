@@ -1,10 +1,12 @@
+"use client";
+
 import { createBrowserClient } from "@supabase/ssr";
 
-export function createSupabaseClient() {
+export function createSupabaseBrowser() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   return createBrowserClient(url, anon);
 }
 
-// Backwards-compatible alias (so existing imports don't break)
-export const createSupabaseBrowser = createSupabaseClient;
+// Backward-compat alias (in case some files import the old name)
+export const createSupabaseClient = createSupabaseBrowser;

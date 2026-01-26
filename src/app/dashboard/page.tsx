@@ -95,10 +95,6 @@ export default async function DashboardPage() {
                 <p className="text-slate-300">No quote requests yet.</p>
               </Card>
             )}
-            import ReviewsPanel from "./reviews-panel";
-
-// ...inside the JSX...
-<ReviewsPanel />
 
           </div>
         </div>

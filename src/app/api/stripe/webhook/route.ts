@@ -1,3 +1,4 @@
+// src/app/api/stripe/webhook/route.ts
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -5,99 +6,146 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function requireEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing ${name}`);
-  return v;
+function mapStripeStatusToAppStatus(status: string) {
+  // You decide what counts as "paid user"
+  // For publishing listings, I recommend treating trialing as active.
+  switch (status) {
+    case "active":
+    case "trialing":
+      return "active";
+    case "canceled":
+    case "unpaid":
+      return "canceled";
+    case "incomplete":
+    case "incomplete_expired":
+    case "past_due":
+      return "incomplete";
+    default:
+      return status; // fallback
+  }
 }
 
 export async function POST(req: Request) {
+  const secretKey = process.env.STRIPE_SECRET_KEY;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!secretKey) return NextResponse.json({ error: "Missing STRIPE_SECRET_KEY" }, { status: 500 });
+  if (!webhookSecret) return NextResponse.json({ error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
+
+  const stripe = new Stripe(secretKey, { apiVersion: "2024-06-20" });
+
+  const rawBody = await req.text();
+  const sig = req.headers.get("stripe-signature");
+  if (!sig) return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
+
+  let event: Stripe.Event;
   try {
-    const secretKey = requireEnv("STRIPE_SECRET_KEY");
-    const webhookSecret = requireEnv("STRIPE_WEBHOOK_SECRET");
+    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: `Webhook signature verification failed: ${err?.message ?? "unknown"}` },
+      { status: 400 }
+    );
+  }
 
-    const stripe = new Stripe(secretKey, { apiVersion: "2024-06-20" });
+  try {
+    // 1) Checkout completed: store customer + subscription id (status may still be incomplete!)
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
 
-    const rawBody = await req.text();
-    const sig = req.headers.get("stripe-signature");
-    if (!sig) {
-      return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
-    }
+      const customerId =
+        typeof session.customer === "string" ? session.customer : session.customer?.id;
 
-    let event: Stripe.Event;
-    try {
-      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
-    } catch (err: any) {
-      return NextResponse.json(
-        { error: `Webhook signature verification failed: ${err?.message ?? "unknown"}` },
-        { status: 400 }
-      );
-    }
+      const subscriptionId =
+        typeof session.subscription === "string"
+          ? session.subscription
+          : session.subscription?.id;
 
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
+      const userId = session.metadata?.supabase_user_id || null;
 
-        const customerId =
-          typeof session.customer === "string" ? session.customer : session.customer?.id;
-
-        const subscriptionId =
-          typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
-
-        const userId = (session.metadata?.supabase_user_id as string) || null;
-
-        if (userId && customerId) {
-          await supabaseAdmin
-            .from("profiles")
-            .update({
-              stripe_customer_id: customerId,
-              stripe_subscription_id: subscriptionId ?? null,
-              subscription_status: "active",
-            })
-            .eq("id", userId);
-        }
-
-        break;
+      if (userId) {
+        await supabaseAdmin
+          .from("profiles")
+          .update({
+            ...(customerId ? { stripe_customer_id: customerId } : {}),
+            ...(subscriptionId ? { stripe_subscription_id: subscriptionId } : {}),
+          })
+          .eq("id", userId);
       }
+    }
 
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const sub = event.data.object as Stripe.Subscription;
+    // 2) Subscription lifecycle events: THIS is what should drive your "active/inactive"
+    if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      const sub = event.data.object as Stripe.Subscription;
 
-        const customerId =
-          typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
+      const customerId =
+        typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
 
-        if (!customerId) break;
+      const subscriptionId = sub.id;
+      const stripeStatus = event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
 
-        const status =
-          event.type === "customer.subscription.deleted" ? "canceled" : (sub.status as string);
+      if (customerId) {
+        await supabaseAdmin
+          .from("profiles")
+          .update({
+            stripe_subscription_id: subscriptionId,
+            subscription_status: mapStripeStatusToAppStatus(String(stripeStatus)),
+            current_period_end: sub.current_period_end
+              ? new Date(sub.current_period_end * 1000).toISOString()
+              : null,
+          })
+          .eq("stripe_customer_id", customerId);
+      }
+    }
 
-        const currentPeriodEnd =
-          typeof sub.current_period_end === "number"
-            ? new Date(sub.current_period_end * 1000).toISOString()
-            : null;
+    // 3) If payment succeeds later, Stripe may flip incomplete -> active
+    if (event.type === "invoice.payment_succeeded") {
+      const invoice = event.data.object as Stripe.Invoice;
 
+      const customerId =
+        typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
+
+      const subscriptionId =
+        typeof invoice.subscription === "string"
+          ? invoice.subscription
+          : invoice.subscription?.id;
+
+      if (customerId && subscriptionId) {
+        // Pull the subscription to get authoritative status
+        const sub = await stripe.subscriptions.retrieve(subscriptionId);
         await supabaseAdmin
           .from("profiles")
           .update({
             stripe_subscription_id: sub.id,
-            subscription_status: status,
-            // If your column is timestamptz, ISO string is fine.
-            current_period_end: currentPeriodEnd,
+            subscription_status: mapStripeStatusToAppStatus(String(sub.status)),
+            current_period_end: sub.current_period_end
+              ? new Date(sub.current_period_end * 1000).toISOString()
+              : null,
           })
           .eq("stripe_customer_id", customerId);
-
-        break;
       }
+    }
 
-      default:
-        break;
+    if (event.type === "invoice.payment_failed") {
+      const invoice = event.data.object as Stripe.Invoice;
+      const customerId =
+        typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
+
+      if (customerId) {
+        await supabaseAdmin
+          .from("profiles")
+          .update({ subscription_status: "incomplete" })
+          .eq("stripe_customer_id", customerId);
+      }
     }
 
     return NextResponse.json({ received: true });
   } catch (err: any) {
-    // IMPORTANT: return 500 so Stripe retries if something is genuinely wrong
-    return NextResponse.json({ error: err?.message ?? "Webhook error" }, { status: 500 });
+    console.error("Webhook handler error:", err);
+    return NextResponse.json({ error: err?.message ?? "Webhook handler error" }, { status: 500 });
   }
 }

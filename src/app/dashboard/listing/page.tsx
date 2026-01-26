@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { revalidatePath } from "next/cache";
+import ReviewsSection from "./reviews";
 
 export const dynamic = "force-dynamic";
 
@@ -264,12 +265,6 @@ export default async function ListingPage(props: { params: unknown }) {
                 <Button type="submit">Send request</Button>
               </div>
             </form>
-          </Card>
-
-          <Card>
-            <h2 className="text-xl font-semibold">Reviews</h2>
-            <p className="mt-1 text-sm text-slate-300">Reviews are visible after approval.</p>
-            <ReviewsSection slug={listing.slug} />
           </Card>
         </div>
       </main>

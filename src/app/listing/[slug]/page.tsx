@@ -7,23 +7,27 @@ import ReviewsSection from "./reviews";
 
 export const dynamic = "force-dynamic";
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+
 async function submitQuote(formData: FormData) {
   "use server";
-  const slug = String(formData.get("slug") || "");
+  const listingKey = String(formData.get("listingKey") || ""); // can be slug or id
   const name = String(formData.get("name") || "");
   const email = String(formData.get("email") || "");
   const phone = String(formData.get("phone") || "");
   const message = String(formData.get("message") || "");
 
-  if (!slug || !name || !email || !message) return;
+  if (!listingKey || !name || !email || !message) return;
 
   const supabase = await createSupabaseServer();
-  const { data: listing } = await supabase
-    .from("listings")
-    .select("id")
-    .eq("slug", slug)
-    .eq("is_published", true)
-    .maybeSingle();
+
+  const query = supabase.from("listings").select("id, slug").limit(1);
+
+  const { data: listing } = isUuid(listingKey)
+    ? await query.eq("id", listingKey).eq("is_published", true).maybeSingle()
+    : await query.eq("slug", listingKey).eq("is_published", true).maybeSingle();
 
   if (!listing) return;
 
@@ -35,17 +39,20 @@ async function submitQuote(formData: FormData) {
     message,
   });
 
-  revalidatePath(`/listing/${slug}`);
+  // Revalidate the canonical path
+  const canonical = listing.slug ? `/listing/${listing.slug}` : `/listing/${listing.id}`;
+  revalidatePath(canonical);
 }
 
 export default async function ListingPage({ params }: { params: { slug: string } }) {
   const supabase = await createSupabaseServer();
-  const { data: listing } = await supabase
-    .from("listings")
-    .select("*")
-    .eq("slug", params.slug)
-    .eq("is_published", true)
-    .maybeSingle();
+  const value = decodeURIComponent(params.slug);
+
+  const query = supabase.from("listings").select("*").limit(1);
+
+  const { data: listing } = isUuid(value)
+    ? await query.eq("id", value).eq("is_published", true).maybeSingle()
+    : await query.eq("slug", value).eq("is_published", true).maybeSingle();
 
   if (!listing) {
     return (
@@ -113,7 +120,7 @@ export default async function ListingPage({ params }: { params: { slug: string }
               {listing.website ? (
                 <div>
                   <span className="text-slate-400">Website:</span>{" "}
-                  <a href={listing.website} target="_blank">
+                  <a href={listing.website} target="_blank" rel="noreferrer">
                     {listing.website}
                   </a>
                 </div>
@@ -133,7 +140,9 @@ export default async function ListingPage({ params }: { params: { slug: string }
             </p>
 
             <form action={submitQuote} className="mt-6 grid gap-4">
-              <input type="hidden" name="slug" value={listing.slug} />
+              {/* can be slug or id */}
+              <input type="hidden" name="listingKey" value={listing.slug || listing.id} />
+
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="text-sm text-slate-300">Name</label>
@@ -179,11 +188,10 @@ export default async function ListingPage({ params }: { params: { slug: string }
           </Card>
 
           <Card>
-      <h2 className="text-xl font-semibold">Reviews</h2>
-      <p className="mt-1 text-sm text-slate-300">Reviews are visible after approval.</p>
-
-      <ReviewsSection slug={listing.slug} />
-    </Card>
+            <h2 className="text-xl font-semibold">Reviews</h2>
+            <p className="mt-1 text-sm text-slate-300">Reviews are visible after approval.</p>
+            <ReviewsSection slug={listing.slug} />
+          </Card>
         </div>
       </main>
     </>

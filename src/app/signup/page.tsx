@@ -3,18 +3,39 @@ import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import Link from "next/link";
 
-export default function SignupPage({ searchParams }: { searchParams: { error?: string } }) {
+export default function SignupPage({
+  searchParams,
+}: {
+  searchParams: { error?: string; check_email?: string; email?: string };
+}) {
+  const showCheckEmail = searchParams?.check_email === "1";
+  const email = searchParams?.email ?? "";
+
   return (
     <>
       <Nav />
       <main className="mx-auto max-w-md px-6 py-12">
         <Card>
           <h1 className="text-2xl font-semibold">Create account</h1>
-          {searchParams?.error ? (
+
+          {/* ✅ CHECK EMAIL MESSAGE */}
+          {showCheckEmail && (
+            <div className="mt-4 rounded-md border border-emerald-800 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-200">
+              <div className="font-semibold">Check your email to verify your account</div>
+              <p className="mt-1">
+                We sent a verification link to <b>{email}</b>.  
+                Open it to finish creating your account.
+              </p>
+              <p className="mt-1 text-xs text-emerald-300">Check spam if you don’t see it.</p>
+            </div>
+          )}
+
+          {/* ❌ ERROR MESSAGE */}
+          {searchParams?.error && (
             <p className="mt-3 rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm text-rose-200">
               {searchParams.error}
             </p>
-          ) : null}
+          )}
 
           <form action="/auth/signup" method="post" className="mt-6 grid gap-4">
             <div>

@@ -44,7 +44,7 @@ export default function SignupPage({ searchParams }: { searchParams: { error?: s
             <Button type="submit">Create account</Button>
           </form>
 
-          <p className="mt-6 text-sm text-slate-300">Check Email To Verify
+          <p className="mt-6 text-sm text-slate-300"><br>Check Email To Verify</br>
             Already have an account? <Link href="/login">Login</Link>
           </p>
         </Card>

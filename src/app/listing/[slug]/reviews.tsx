@@ -17,8 +17,7 @@ async function submitReview(formData: FormData) {
   if (!slug || !body) return;
 
   const supabase = await createSupabaseServer();
-  console.log("REVIEWS:", approvedReviews);
-
+  
 
   // Find published listing
   const { data: listing } = await supabase
@@ -58,13 +57,17 @@ export default async function ReviewsSection({ slug }: { slug: string }) {
   if (!listing) return null;
 
   // Public only sees approved (RLS should enforce this too)
-  const { data: approvedReviews } = await supabase
-    .from("reviews")
-    .select("id,rating,title,body,reviewer_name,created_at")
-    .eq("listing_id", listing.id)
-    .eq("is_approved", true) // ✅ FIX
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const { data: approvedReviews, error: reviewsErr } = await supabase
+  .from("reviews")
+  .select("id,rating,title,body,reviewer_name,created_at")
+  .eq("listing_id", listing.id)
+  .eq("is_approved", true)
+  .order("created_at", { ascending: false })
+  .limit(50);
+
+console.log("REVIEWS_ERR:", reviewsErr);
+console.log("REVIEWS_DATA:", approvedReviews);
+
 
   return (
     <div className="mt-4">
